@@ -68,3 +68,78 @@
 📝原作者：[查看](https://github.com/Entropy-Increase-Team/WeGame-plugin) 
 ---
 *如果有任何问题或建议，欢迎提交 Issue。*
+
+
+为了确保你的隐私万无一失，这里是关于 **GitHub Secrets** 配置的详细图文级操作指南。
+
+通过这个设置，即便你的 GitHub 仓库是**公开（Public）**的，别人也只能看到你的代码逻辑，而永远无法获取你的 Key 和 Webhook 地址。
+
+---
+
+### 第一步：在 GitHub 仓库中创建 Secret
+
+1.  打开你的 GitHub 仓库页面。
+2.  点击顶部菜单栏最右侧的 **Settings**（设置）。
+3.  在左侧侧边栏中，找到 **Security** 部分，点击 **Secrets and variables** 展开，然后选择 **Actions**。
+4.  点击页面右侧的大按钮：**New repository secret**（新建仓库机密）。
+
+#### 5. 添加第一个 Secret (API Key)：
+*   **Name**: 输入 `WEGAME_API_KEY`（必须全大写，建议和代码保持一致）。
+*   **Secret**: 粘贴你的 Key，即 `sk-ba042e079cf9ccb30e72b3d5af458f45`。
+*   点击 **Add secret**。
+
+#### 6. 添加第二个 Secret (Webhook)：
+*   再次点击 **New repository secret**。
+*   **Name**: 输入 `WECHAT_WEBHOOK_URL`。
+*   **Secret**: 粘贴你企业微信群机器人的完整 Webhook 链接。
+*   点击 **Add secret**。
+
+**完成后，你应该能在页面上看到两个变量，但它们的内容是加密不可见的。**
+
+---
+
+### 第二步：代码是如何“偷”到这些 Key 的？（原理解析）
+
+你可能会担心：代码里没写 Key，它是怎么运行的？这需要一个“桥梁”。
+
+#### 1. 桥梁的一端：YAML 配置文件
+在 `.github/workflows/rocom_check.yml` 文件中，有一段关键配置：
+
+```yaml
+env:
+  MY_API_KEY: ${{ secrets.WEGAME_API_KEY }}
+  MY_WEBHOOK: ${{ secrets.WECHAT_WEBHOOK_URL }}
+```
+*   **意思是**：GitHub 运行脚本时，会从加密保险箱（Secrets）里取出值，临时存放在这台虚拟电脑的“系统环境变量”里，起名叫 `MY_API_KEY`。
+
+#### 2. 桥梁的另一端：Python 脚本
+在 `main.py` 中，我们使用了 `os.getenv`：
+
+```python
+import os
+
+class RocomTargetBot:
+    def __init__(self):
+        # 从虚拟电脑的“系统环境变量”里读取那个叫 MY_API_KEY 的值
+        self.api_key = os.getenv("MY_API_KEY")
+        self.webhook_url = os.getenv("MY_WEBHOOK")
+```
+*   **意思是**：Python 会去系统里找这个变量。因为 GitHub 已经提前塞进去了，所以 Python 就能顺利拿到真正的 Key。
+
+---
+
+### 第三步：如何验证配置是否成功？
+
+1.  代码上传后，点击仓库顶部的 **Actions** 选项卡。
+2.  在左侧选择你的 Workflow 名称（例如 **Rocom Merchant Bot**）。
+3.  点击右侧的 **Run workflow** 按钮手动执行。
+4.  点击进入正在运行的任务（显示为黄色圆圈或绿色对勾）。
+5.  查看 **Run script** 这一步的日志：
+    *   **如果成功**：你会看到“未发现目标物品”或者推送成功的提示。
+    *   **隐私保护**：即使代码报错，GitHub 也会非常聪明地自动将日志里的 Key 替换为 `***`，确保万无一失。
+
+---
+
+### ⚠️ 隐私保护的最后提醒
+*   **本地测试不要上传**：如果你在电脑本地测试时，不小心把 Key 直接写在了代码里（如 `self.api_key = "sk-ba04..."`），**绝对不要 `git commit` 推送到 GitHub**。
+*   **清理历史记录**：如果不小心上传了，即使你后来删掉代码再重新上传，Key 仍然会留在 `Git History`（历史版本）里。这种情况下，你必须**立即重置（Reset）**你的 Wegame API Key，让旧的 Key 失效。
