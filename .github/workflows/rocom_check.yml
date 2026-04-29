@@ -3,17 +3,17 @@ name: Rocom Merchant Bot
 on:
   schedule:
     # 这里必须写 UTC 时间 (北京时间 - 8)
-    # 00:00 UTC = 08:00 北京
-    # 04:00 UTC = 12:00 北京
-    # 08:00 UTC = 16:00 北京
-    # 12:00 UTC = 20:00 北京
-    - cron: '0 0,4,8,12 * * *'
+    # 23:55 UTC = 07:55 北京 (前一天/当天)
+    # 03:55 UTC = 11:55 北京
+    # 07:55 UTC = 15:55 北京
+    # 11:55 UTC = 19:55 北京
+    - cron: '55 23,3,7,11 * * *'
   workflow_dispatch:
 
 jobs:
   check_merchant:
     runs-on: ubuntu-latest
-    # 【新增】设置整个任务的环境变量为上海时区
+    # 设置整个任务的环境变量为上海时区
     env:
       TZ: Asia/Shanghai
 
