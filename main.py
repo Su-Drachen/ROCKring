@@ -14,9 +14,8 @@ class RocomTargetBot:
 		self.gist_token = os.getenv("GIST_TOKEN")
 
 		self.api_base_url = "https://wegame.shallow.ink"
-		self.target_keywords = ["棱镜", "棱彩", "祝福", "炫彩", "国王", "奇异血脉",  "果","晶","玉","蛋"]
+		self.target_keywords = ["棱镜", "棱彩", "祝福", "炫彩", "国王", "奇异血脉", "果", "晶", "玉", "蛋"]
 		self.beijing_tz = timezone(timedelta(hours=8))
-
 
 	def get_beijing_now(self):
 		return datetime.now(self.beijing_tz)
@@ -24,12 +23,8 @@ class RocomTargetBot:
 	def get_current_window_target(self):
 		"""
 		计算当前时间所属的任务窗口起点 (7:55, 11:55, 15:55, 19:55)
-		例如：8:05 执行，对应的窗口是 7:55；12:05 执行，对应 11:55
 		"""
 		now = self.get_beijing_now()
-		# now = "12:49"
-		print(now)
-		# 定义四个标准触发点
 		targets = [
 			now.replace(hour=7, minute=55, second=0, microsecond=0),
 			now.replace(hour=11, minute=55, second=0, microsecond=0),
@@ -37,8 +32,6 @@ class RocomTargetBot:
 			now.replace(hour=19, minute=55, second=0, microsecond=0)
 		]
 
-		# 寻找当前时间之前（或相等）的最后一个 target
-		# 如果当前时间比 7:55 还早，则取前一天最后的 19:55
 		past_targets = [t for t in targets if t <= now]
 		if not past_targets:
 			yesterday = now - timedelta(days=1)
@@ -71,7 +64,7 @@ class RocomTargetBot:
 		payload = {
 			"files": {
 				"rocom_state.json": {
-					"content": json.dumps(state)
+					"content": json.dumps(state, ensure_ascii=False, indent=2)
 				}
 			}
 		}
@@ -90,18 +83,17 @@ class RocomTargetBot:
 			try:
 				resp = await client.get(f"{self.api_base_url}{path}", headers=headers)
 				data = resp.json()
-				if data.get("code") != 0: return None, False
+				if data.get("code") != 0: return None, None, False
 
 				res_data = data.get("data", {})
 				activities = res_data.get("merchantActivities") or res_data.get("merchant_activities") or []
 
-				# 如果 activities 为空，说明商品还没刷新出来
 				if not activities:
-					return None, False
+					return None, None, False
 
 				props = activities[0].get("get_props", [])
-				hit_items = []
-				# 只要 activities 有内容，我们就认为 API 已经刷新了
+				hit_items = []  # 匹配关键词的
+				all_items = []  # 当前时段所有的
 				api_refreshed = len(props) > 0
 
 				for item in props:
@@ -110,22 +102,30 @@ class RocomTargetBot:
 					end_time = item.get("end_time")
 
 					if start_time and end_time:
+						# 只记录当前生效的商品
 						if not (int(start_time) <= now_ms < int(end_time)):
 							continue
 
-					if any(kw in name for kw in self.target_keywords):
 						st_dt = datetime.fromtimestamp(int(start_time) / 1000, self.beijing_tz)
 						et_dt = datetime.fromtimestamp(int(end_time) / 1000, self.beijing_tz)
-						hit_items.append(f"· {name} ({st_dt.strftime('%H:%M')}-{et_dt.strftime('%H:%M')})")
+						time_str = f"({st_dt.strftime('%H:%M')}-{et_dt.strftime('%H:%M')})"
+						item_info = f"{name} {time_str}"
 
-				return hit_items, api_refreshed
+						# 放入全量列表
+						all_items.append(item_info)
+
+						# 判断是否命中关键词
+						if any(kw in name for kw in self.target_keywords):
+							hit_items.append(f"· {item_info}")
+
+				return hit_items, all_items, api_refreshed
 			except Exception as e:
 				print(f"数据获取异常: {e}")
-				return None, False
+				return None, None, False
 
 	async def send_webhook(self, hit_list):
 		if not hit_list: return
-		title = "📢 【洛克王国】物资刷新提醒！（测试版修改关注列表）\n"
+		title = "📢 【洛克王国】物资刷新提醒！\n"
 		body = "\n".join(hit_list)
 		now_str = self.get_beijing_now().strftime('%Y-%m-%d %H:%M:%S')
 		footer = f"\n\n⏰ 检测时间：{now_str}"
@@ -147,41 +147,40 @@ class RocomTargetBot:
 		# 2. 读取 Gist 状态
 		state = await self.get_gist_state()
 		last_time = state.get("last_time")
-		has_product = state.get("has_product", False)
+		# 只要记录里有商品列表且时间匹配，就认为已处理
+		has_product_recorded = "products" in state and state.get("products")
 
 		print(f"当前时间窗口: {target_str}")
-		print(f"Gist 记录: 时间={last_time}, 是否有商品={has_product}")
 
 		# 3. 判断是否需要执行检测
-		# 条件：如果 Gist 时间匹配 且 has_product 为 True，则跳过
-		if last_time == target_str and has_product:
-			print("该时间段已成功执行并发现/处理过商品，跳过。")
+		if last_time == target_str and has_product_recorded:
+			print("该时间段已记录过商品信息，跳过。")
 			return
 
 		# 4. 执行 API 检测
-		hit_list, api_refreshed = await self.get_filtered_products()
+		hit_list, all_list, api_refreshed = await self.get_filtered_products()
 
 		if api_refreshed:
-			# 只要 API 刷新了（不管有没有关键词命中的），我们就更新 Gist 标记该时段已处理
 			print("API 已刷新商品。")
 			if hit_list:
 				await self.send_webhook(hit_list)
 				print("发现目标物品，已推送。")
 			else:
-				print("未发现目标物品，仅记录状态。")
+				print("未发现目标物品，仅记录全量清单。")
 
-			# 更新 Gist 状态为：当前时间点，且已成功获取商品
+			# 更新 Gist 状态：保存时间点和当前所有的商品列表
 			await self.update_gist_state({
 				"last_time": target_str,
-				"has_product": True
+				"has_product": True,  # 保留原字段兼容
+				"products": all_list if all_list else ["无商品数据"]
 			})
 		else:
-			# API 还没刷新（没数据）
 			print("API 尚未返回有效商品信息。")
-			# 记录当前窗口，但标记无商品，下次运行会再次触发
+			# 记录当前窗口，但标记商品为空，下次运行会再次触发
 			await self.update_gist_state({
 				"last_time": target_str,
-				"has_product": False
+				"has_product": False,
+				"products": []
 			})
 
 
